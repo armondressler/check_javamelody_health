@@ -8,6 +8,8 @@ from urllib.request import urlopen
 import urllib.error
 from sys import stderr
 from collections import OrderedDict
+from os.path import join
+from time import time
 
 __author__ = "Armon Dressler"
 __license__ = "GPLv3"
@@ -39,8 +41,8 @@ class CheckJavamelodyHealth(nag.Resource):
     def _get_json_data(self):
         try:
             response = urlopen(self.url, timeout=self.url_timeout)
-        except (urllib.error.URLError, TypeError) as e:
-            print("Failed to grab data from {} .".format(self.url),file=stderr)
+        except (urllib.error.URLError, TypeError):
+            print("Failed to grab data from {} .".format(self.url), file=stderr)
             raise
         return json.load(response)
 
@@ -77,6 +79,53 @@ class CheckJavamelodyHealth(nag.Resource):
             "uom": "%",
             "min": 0,
             "max": 100}
+
+    def request_count_timed(self, lapsize_in_secs=60):
+        '''returns an average of total requests received across lapsize_in_secs,
+        calculated from a historic value read from a file and the current value from the webinterface'''
+
+        current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
+        current_time = int(time())
+        try:
+            _, historic_time, historic_value = self._get_json_metric_from_file("request_count_timed")
+        except TypeError:
+            #upon first execution, no historic value can be compared
+            #to prevent extreme values (current_value - 0) we return 0
+            metric_value = 0
+        else:
+            metric_value = (current_value - historic_value)/(current_time - historic_time)*lapsize_in_secs
+        self._write_json_metric_to_file("request_count_timed",current_value)
+        return {
+            "value": metric_value,
+            "name": "request_count_timed",
+            "uom": "c",
+            "min": 0}
+
+    def _get_json_metric_from_file(self, metric):
+        try:
+            with open(join(self.tmpdir, metric), "r") as metric_file:
+                metric_data = json.load(metric_file)
+                for metric_tuple in metric_data:
+                    if metric_tuple[0] == metric_tuple:
+                        return metric_tuple
+                else:
+                    return None
+        except FileNotFoundError:
+            print("Failed to open file at {} .".format(join(self.tmpdir, metric)), file=stderr)
+            return None
+
+    def _write_json_metric_to_file(self, metric, value):
+        current_unixtime = int(time())
+        try:
+            with open(join(self.tmpdir, metric), "w") as metric_file:
+                json.dump((metric, current_unixtime, value), metric_file)
+        except IOError:
+            print("Failed to write to file at {} .".format(join(self.tmpdir, metric)), file=stderr)
+            raise
+
+
+
+
 
 #memoryInformations -> usedNonHeapMemory (nur absolute)
 #memoryInformations -> garbageCollectionTimeMillis
@@ -118,7 +167,8 @@ class CheckJavamelodyHealthContext(nag.ScalarContext):
     fmt_helper = {
         "heap_memory_pct": "{value}{uom} of total heap capacity in use.",
         "thread_capacity_pct": "{value}{uom} of max threads created.",
-        "filedescriptor_capacity_pct": "{value}{uom} of max file descriptors in use."
+        "filedescriptor_capacity_pct": "{value}{uom} of max file descriptors in use.",
+        "request_count_timed": "{value} requests per minute received"
     }
 
     def __init__(self, name, warning=None, critical=None,
