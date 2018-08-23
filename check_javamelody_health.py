@@ -93,7 +93,13 @@ class CheckJavamelodyHealth(nag.Resource):
             #to prevent extreme values (current_value - 0) we return 0
             metric_value = 0
         else:
-            metric_value = (current_value - historic_value)/(current_time - historic_time)*lapsize_in_secs
+            time_difference = current_time - historic_time
+            if time_difference:
+                #prevent ZeroDivisionError
+                metric_value = (current_value - historic_value)/time_difference*lapsize_in_secs
+                metric_value = round(metric_value, 2)
+            else:
+                metric_value = 0
         self._write_json_metric_to_file("request_count_timed",current_value)
         return {
             "value": metric_value,
