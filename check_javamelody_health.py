@@ -86,7 +86,7 @@ class CheckJavamelodyHealth(nag.Resource):
         calculated from a historic value read from a file and the current value from the web interface"""
 
         current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
-        metric_value = self._evaluate_with_historical_metric("request_count_timed")
+        metric_value = self._evaluate_with_historical_metric("request_count_timed",current_value)
         self._write_json_metric_to_file("request_count_timed",current_value)
         return {
             "value": metric_value,
