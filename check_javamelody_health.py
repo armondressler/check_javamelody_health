@@ -82,7 +82,7 @@ class CheckJavamelodyHealth(nag.Resource):
             "max": 100}
 
     def request_count_timed(self):
-        """ returns an average of total requests received across lapsize_in_secs,
+        """ returns an average of total requests received across self.lapsize_in_secs,
         calculated from a historic value read from a file and the current value from the web interface"""
 
         current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
@@ -93,6 +93,20 @@ class CheckJavamelodyHealth(nag.Resource):
             "name": "request_count_timed",
             "uom": "c",
             "min": 0}
+
+    def garbagecollection_timed(self):
+        """ returns an average of total required ms of garbage collection time,
+        calculated from a historic value read from a file and the current value from the web interface"""
+
+        current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["garbageCollectionTimeMillis"]
+        metric_value = self._evaluate_with_historical_metric("garbagecollection_timed",current_value)
+        self._write_json_metric_to_file("garbagecollection_timed",current_value)
+        return {
+            "value": metric_value,
+            "name": "garbagecollection_timed",
+            "uom": "ms",
+            "min": 0}
+
 
     def _evaluate_with_historical_metric(self,metric,current_value):
         current_time = int(time())
@@ -174,9 +188,10 @@ class CheckJavamelodyHealth(nag.Resource):
 class CheckJavamelodyHealthContext(nag.ScalarContext):
     fmt_helper = {
         "heap_memory_pct": "{value}{uom} of total heap capacity in use.",
-        "thread_capacity_pct": "{value}{uom} of max threads created.",
+        "thread_capacity_pct": "{value}{uom} of max threads reached.",
         "filedescriptor_capacity_pct": "{value}{uom} of max file descriptors in use.",
-        "request_count_timed": "{value} requests per minute received"
+        "request_count_timed": "{value} requests per minute received.",
+        "garbagecollection_timed": "{value}{uom} spent on gc for the last minute."
     }
 
     def __init__(self, name, warning=None, critical=None,
