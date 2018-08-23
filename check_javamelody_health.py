@@ -98,7 +98,7 @@ class CheckJavamelodyHealth(nag.Resource):
         """ returns an average of total required ms of garbage collection time,
         calculated from a historic value read from a file and the current value from the web interface"""
 
-        current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["garbageCollectionTimeMillis"]
+        current_value = self.json_data["list"][-1]["memoryInformations"]["garbageCollectionTimeMillis"]
         metric_value = self._evaluate_with_historical_metric("garbagecollection_timed",current_value)
         self._write_json_metric_to_file("garbagecollection_timed",current_value)
         return {
