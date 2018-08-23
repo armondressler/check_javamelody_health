@@ -45,7 +45,7 @@ class CheckJavamelodyHealth(nag.Resource):
             print("Failed to grab data from {} .".format(self.url), file=stderr)
             raise
         response = response.read().decode('utf-8').replace('\0', '')
-        return json.load(response)
+        return json.loads(response)
 
     def _get_available_endpoints(self):
         endpoints = OrderedDict()
