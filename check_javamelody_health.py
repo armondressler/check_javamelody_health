@@ -7,6 +7,7 @@ import json
 from urllib.request import urlopen
 import urllib.error
 from sys import stderr
+from collections import OrderedDict
 
 __author__ = "Armon Dressler"
 __license__ = "GPLv3"
@@ -24,13 +25,15 @@ class CheckJavamelodyHealth(nag.Resource):
                  tmpdir=None,
                  url=None,
                  min=None,
-                 max=None):
+                 max=None,
+                 scan=None):
         self.url_timeout = 12
         self.metric = metric
         self.tmpdir = tmpdir
         self.url = url + "?format=json&period=jour"
         self.min = min
         self.max = max
+        self.scan = scan
         self.json_data = self._get_json_data()
 
     def _get_json_data(self):
@@ -40,6 +43,10 @@ class CheckJavamelodyHealth(nag.Resource):
             print("Failed to grab data from {} .".format(self.url),file=stderr)
             raise
         return json.load(response)
+
+    def _get_available_endpoints(self):
+        endpoints = OrderedDict()
+
 
     def heap_capacity_pct(self):
         part = self.json_data["list"][-1]["memoryInformations"]["usedMemory"]
@@ -51,15 +58,33 @@ class CheckJavamelodyHealth(nag.Resource):
             "min": 0,
             "max": 100}
 
-    def threads_capacity_pct(self):
+    def thread_capacity_pct(self):
         part = self.json_data["list"][-1]["tomcatInformationsList"][0]["currentThreadCount"]
         total = self.json_data["list"][-1]["tomcatInformationsList"][0]["maxThreads"]
         return {
             "value": self._get_percentage(part, total),
-            "name": "threads_capacity_pct",
+            "name": "thread_capacity_pct",
             "uom": "%",
             "min": 0,
             "max": 100}
+
+    def filedescriptor_capacity_pct(self):
+        part = self.json_data["list"][-1]["unixOpenFileDescriptorCount"]
+        total = self.json_data["list"][-1]["unixMaxFileDescriptorCount"]
+        return {
+            "value": self._get_percentage(part, total),
+            "name": "filedescriptor_capacity_pct",
+            "uom": "%",
+            "min": 0,
+            "max": 100}
+
+#memoryInformations -> usedNonHeapMemory (nur absolute)
+#memoryInformations -> garbageCollectionTimeMillis
+#tomcatInformationsList -> requestCount
+#scan http endpoints --> "list"[0]["requests"].names()
+#dokumentieren + tests ...
+#http://10.21.2.2:8180/triboni/cpx-admin/javamelody?period=jour&part=heaphisto
+#https://github.com/sbower/nagios_javamelody_plugin/blob/master/src/main/java/advws/net/nagios/jmeoldy/core/CheckJMelody.java
 
     def _get_percentage(self, part, total):
         try:
@@ -73,6 +98,9 @@ class CheckJavamelodyHealth(nag.Resource):
         return round(part / total * 100, 2)
 
     def probe(self):
+        if self.scan:
+            self._get_available_endpoints()
+            exit()
         metric_dict = operator.methodcaller(self.metric)(self)
         if self.min:
             metric_dict["min"] = self.min
@@ -89,7 +117,8 @@ class CheckJavamelodyHealth(nag.Resource):
 class CheckJavamelodyHealthContext(nag.ScalarContext):
     fmt_helper = {
         "heap_memory_pct": "{value}{uom} of total heap capacity in use.",
-        "threads_capacity_pct": "{value}{uom} of maximum threads created.",
+        "thread_capacity_pct": "{value}{uom} of max threads created.",
+        "filedescriptor_capacity_pct": "{value}{uom} of max file descriptors in use."
     }
 
     def __init__(self, name, warning=None, critical=None,
@@ -144,9 +173,10 @@ def parse_arguments():
                         help='minimum value for performance data')
     parser.add_argument('--metric', action='store', required=True,
                         help='Supported keywords: heap_usage')
+    parser.add_argument('--scan', action='store_true', default=False,
+                        help='Show ')
     parser.add_argument('-v', '--verbose', action='count', default=0,
                         help='increase output verbosity (use up to 3 times)')
-
     return parser.parse_args()
 
 
@@ -159,10 +189,10 @@ def main():
             tmpdir=args.tmpdir,
             url=args.url,
             min=args.min,
-            max=args.max),
+            max=args.max,
+            scan=args.scan),
         CheckJavamelodyHealthContext(args.metric, warning=args.warning, critical=args.critical),
-        CheckJavamelodyHealthSummary(args.url)
-    )
+        CheckJavamelodyHealthSummary(args.url))
     check.main(verbose=args.verbose)
 
 
