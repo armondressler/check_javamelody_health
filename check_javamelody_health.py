@@ -30,6 +30,7 @@ class CheckJavamelodyHealth(nag.Resource):
                  max=None,
                  scan=None):
         self.url_timeout = 12
+        self.lapsize_in_secs = 60
         self.metric = metric
         self.tmpdir = tmpdir
         self.url = url + "?format=json&period=jour"
@@ -80,32 +81,35 @@ class CheckJavamelodyHealth(nag.Resource):
             "min": 0,
             "max": 100}
 
-    def request_count_timed(self, lapsize_in_secs=60):
-        '''returns an average of total requests received across lapsize_in_secs,
-        calculated from a historic value read from a file and the current value from the webinterface'''
+    def request_count_timed(self):
+        """ returns an average of total requests received across lapsize_in_secs,
+        calculated from a historic value read from a file and the current value from the web interface"""
 
         current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
-        current_time = int(time())
-        try:
-            _, historic_time, historic_value = self._get_json_metric_from_file("request_count_timed")
-        except TypeError:
-            #upon first execution, no historic value can be compared
-            #to prevent extreme values (current_value - 0) we return 0
-            metric_value = 0
-        else:
-            time_difference = current_time - historic_time
-            if time_difference:
-                #prevent ZeroDivisionError
-                metric_value = (current_value - historic_value)/time_difference*lapsize_in_secs
-                metric_value = round(metric_value, 2)
-            else:
-                metric_value = 0
+        metric_value = self._evaluate_with_historical_metric("request_count_timed")
         self._write_json_metric_to_file("request_count_timed",current_value)
         return {
             "value": metric_value,
             "name": "request_count_timed",
             "uom": "c",
             "min": 0}
+
+    def _evaluate_with_historical_metric(self,metric,current_value):
+        current_time = int(time())
+        try:
+            _, historic_time, historic_value = self._get_json_metric_from_file(metric)
+        except TypeError:
+            #upon first execution, no historic value can be compared
+            #to prevent extreme values (current_value - 0) we use 0
+            return 0
+        else:
+            time_difference = current_time - historic_time
+            if time_difference:
+                #prevent ZeroDivisionError
+                metric_value = (current_value - historic_value)/time_difference*self.lapsize_in_secs
+                return round(metric_value, 2)
+            else:
+                return 0
 
     def _get_json_metric_from_file(self, metric):
         try:
