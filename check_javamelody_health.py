@@ -44,11 +44,11 @@ class CheckJavamelodyHealth(nag.Resource):
         except (urllib.error.URLError, TypeError):
             print("Failed to grab data from {} .".format(self.url), file=stderr)
             raise
+        response = response.read().decode('utf-8').replace('\0', '')
         return json.load(response)
 
     def _get_available_endpoints(self):
         endpoints = OrderedDict()
-
 
     def heap_capacity_pct(self):
         part = self.json_data["list"][-1]["memoryInformations"]["usedMemory"]
@@ -104,12 +104,13 @@ class CheckJavamelodyHealth(nag.Resource):
     def _get_json_metric_from_file(self, metric):
         try:
             with open(join(self.tmpdir, metric), "r") as metric_file:
-                metric_data = json.load(metric_file)
-                for metric_tuple in metric_data:
-                    if metric_tuple[0] == metric_tuple:
-                        return metric_tuple
-                else:
+                try:
+                    metric_data = json.load(metric_file)
+                except TypeError:
+                    print("Failed to read json from file at {} .".format(join(self.tmpdir, metric)), file=stderr)
                     return None
+                else:
+                    return metric_data
         except FileNotFoundError:
             print("Failed to open file at {} .".format(join(self.tmpdir, metric)), file=stderr)
             return None
@@ -122,9 +123,6 @@ class CheckJavamelodyHealth(nag.Resource):
         except IOError:
             print("Failed to write to file at {} .".format(join(self.tmpdir, metric)), file=stderr)
             raise
-
-
-
 
 
 #memoryInformations -> usedNonHeapMemory (nur absolute)
