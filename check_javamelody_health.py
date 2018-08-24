@@ -8,6 +8,8 @@ from urllib.request import urlopen
 import urllib.error
 from sys import stderr
 from collections import OrderedDict
+from os.path import join
+from time import time
 
 __author__ = "Armon Dressler"
 __license__ = "GPLv3"
@@ -28,7 +30,9 @@ class CheckJavamelodyHealth(nag.Resource):
                  min=None,
                  max=None,
                  scan=None):
-        self.url_timeout = url_timeout
+
+        self.url_timeout = 12
+        self.lapsize_in_secs = 60
         self.metric = metric
         self.tmpdir = tmpdir
         self.url = url + "?format=json&period=jour"
@@ -41,10 +45,11 @@ class CheckJavamelodyHealth(nag.Resource):
     def _get_json_data(self):
         try:
             response = urlopen(self.url, timeout=self.url_timeout)
-        except (urllib.error.URLError, TypeError) as e:
-            print("Failed to grab data from {} .".format(self.url),file=stderr)
+        except (urllib.error.URLError, TypeError):
+            print("Failed to grab data from {} .".format(self.url), file=stderr)
             raise
-        return json.load(response)
+        response = response.read().decode('utf-8').replace('\0', '')
+        return json.loads(response)
 
     def _get_available_endpoints(self):
         valid_endpoint_types = ['http', 'sql', 'jpa', 'ejb', 'spring', 'guice', 'services', 'struts', 'jsf', 'jsp']
@@ -68,7 +73,6 @@ class CheckJavamelodyHealth(nag.Resource):
         #
         for request in self.json_data["list"][0][endpoint_type]["requests"][0]:
             print(request["name"])
-
 
     def heap_capacity_pct(self):
         part = self.json_data["list"][-1]["memoryInformations"]["usedMemory"]
@@ -99,6 +103,74 @@ class CheckJavamelodyHealth(nag.Resource):
             "uom": "%",
             "min": 0,
             "max": 100}
+
+    def request_count_timed(self):
+        """ returns an average of total requests received across self.lapsize_in_secs,
+        calculated from a historic value read from a file and the current value from the web interface"""
+
+        current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
+        metric_value = self._evaluate_with_historical_metric("request_count_timed",current_value)
+        self._write_json_metric_to_file("request_count_timed",current_value)
+        return {
+            "value": metric_value,
+            "name": "request_count_timed",
+            "uom": "c",
+            "min": 0}
+
+    def garbagecollection_timed(self):
+        """ returns an average of total required ms of garbage collection time,
+        calculated from a historic value read from a file and the current value from the web interface"""
+
+        current_value = self.json_data["list"][-1]["memoryInformations"]["garbageCollectionTimeMillis"]
+        metric_value = self._evaluate_with_historical_metric("garbagecollection_timed",current_value)
+        self._write_json_metric_to_file("garbagecollection_timed",current_value)
+        return {
+            "value": metric_value,
+            "name": "garbagecollection_timed",
+            "uom": "ms",
+            "min": 0}
+
+
+    def _evaluate_with_historical_metric(self,metric,current_value):
+        current_time = int(time())
+        try:
+            _, historic_time, historic_value = self._get_json_metric_from_file(metric)
+        except TypeError:
+            #upon first execution, no historic value can be compared
+            #to prevent extreme values (current_value - 0) we use 0
+            return 0
+        else:
+            time_difference = current_time - historic_time
+            if time_difference:
+                #prevent ZeroDivisionError
+                metric_value = (current_value - historic_value)/time_difference*self.lapsize_in_secs
+                return round(metric_value, 2)
+            else:
+                return 0
+
+    def _get_json_metric_from_file(self, metric):
+        try:
+            with open(join(self.tmpdir, metric), "r") as metric_file:
+                try:
+                    metric_data = json.load(metric_file)
+                except TypeError:
+                    print("Failed to read json from file at {} .".format(join(self.tmpdir, metric)), file=stderr)
+                    return None
+                else:
+                    return metric_data
+        except FileNotFoundError:
+            print("Failed to open file at {} .".format(join(self.tmpdir, metric)), file=stderr)
+            return None
+
+    def _write_json_metric_to_file(self, metric, value):
+        current_unixtime = int(time())
+        try:
+            with open(join(self.tmpdir, metric), "w") as metric_file:
+                json.dump((metric, current_unixtime, value), metric_file)
+        except IOError:
+            print("Failed to write to file at {} .".format(join(self.tmpdir, metric)), file=stderr)
+            raise
+
 
 #memoryInformations -> usedNonHeapMemory (nur absolute)
 #memoryInformations -> garbageCollectionTimeMillis
@@ -139,8 +211,10 @@ class CheckJavamelodyHealth(nag.Resource):
 class CheckJavamelodyHealthContext(nag.ScalarContext):
     fmt_helper = {
         "heap_memory_pct": "{value}{uom} of total heap capacity in use.",
-        "thread_capacity_pct": "{value}{uom} of max threads created.",
-        "filedescriptor_capacity_pct": "{value}{uom} of max file descriptors in use."
+        "thread_capacity_pct": "{value}{uom} of max threads reached.",
+        "filedescriptor_capacity_pct": "{value}{uom} of max file descriptors in use.",
+        "request_count_timed": "{value} requests per minute received.",
+        "garbagecollection_timed": "{value}{uom} spent on gc for the last minute."
     }
 
     def __init__(self, name, warning=None, critical=None,
