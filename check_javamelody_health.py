@@ -193,7 +193,7 @@ def parse_arguments():
                         help='maximum value for performance data')
     parser.add_argument('--min', action='store', default=None,
                         help='minimum value for performance data')
-    parser.add_argument('--metric', action='store', required=True,
+    parser.add_argument('--metric', action='store', required=False,
                         help='Supported keywords: heap_usage')
     parser.add_argument('--scan', action='store_true', default=False,
                         help='Show ')
