@@ -26,14 +26,17 @@ class CheckJavamelodyHealth(nag.Resource):
                  metric,
                  tmpdir=None,
                  url=None,
+                 url_timeout=10,
                  min=None,
                  max=None,
                  scan=None):
+
         self.url_timeout = 12
         self.lapsize_in_secs = 60
         self.metric = metric
         self.tmpdir = tmpdir
         self.url = url + "?format=json&period=jour"
+
         self.min = min
         self.max = max
         self.scan = scan
@@ -49,7 +52,27 @@ class CheckJavamelodyHealth(nag.Resource):
         return json.loads(response)
 
     def _get_available_endpoints(self):
-        endpoints = OrderedDict()
+        valid_endpoint_types = ['http', 'sql', 'jpa', 'ejb', 'spring', 'guice', 'services', 'struts', 'jsf', 'jsp']
+        application_name = self.json_data["list"][0]["application"].split("_")[0]
+        endpoints = {"application": application_name,"endpoint_types": []}
+        for endpoint_type in self.json_data["list"]:
+            if endpoint_type.get("name","NONE") not in valid_endpoint_types:
+                continue
+            endpoints["endpoint_types"].append(
+                OrderedDict([("endpoint_type", endpoint_type["name"]),
+                             ("endpoint_size", len(self.json_data["list"][0]["requests"])),
+                             ("requests", OrderedDict())
+                             ])
+            )
+            self._get_available_requests(endpoint_type["name"])
+
+    def _get_available_requests(self, endpoint_type):
+        requests = OrderedDict()
+        #
+        #ENUM für endpoint_type erstellen
+        #
+        for request in self.json_data["list"][0][endpoint_type]["requests"][0]:
+            print(request["name"])
 
     def heap_capacity_pct(self):
         part = self.json_data["list"][-1]["memoryInformations"]["usedMemory"]
@@ -244,7 +267,7 @@ def parse_arguments():
                         help='maximum value for performance data')
     parser.add_argument('--min', action='store', default=None,
                         help='minimum value for performance data')
-    parser.add_argument('--metric', action='store', required=True,
+    parser.add_argument('--metric', action='store', required=False,
                         help='Supported keywords: heap_usage')
     parser.add_argument('--scan', action='store_true', default=False,
                         help='Show ')
