@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import nagiosplugin as nag
 import operator
 import json
 from urllib.request import urlopen
@@ -10,6 +9,15 @@ from sys import stderr
 from collections import OrderedDict
 from os.path import join
 from time import time
+
+try:
+    import nagiosplugin as nag
+except ImportError:
+    print("Failed to import python module nagiosplugin,"
+          "make sure to install it; e.g. pip3 install nagiosplugin", file=stderr)
+    exit(3)
+
+
 
 __author__ = "Armon Dressler"
 __license__ = "GPLv3"
@@ -31,16 +39,18 @@ class CheckJavamelodyHealth(nag.Resource):
                  max=None,
                  scan=None):
 
-        self.url_timeout = 12
+        self.url_timeout = url_timeout
         self.lapsize_in_secs = 60
         self.metric = metric
         self.tmpdir = tmpdir
-        self.url = url + "?format=json&period=jour"
-
+        self.url = url + "?format=json&period=jour" #TODO http://10.21.2.253:8180/sample/monitoring?format=json&period=tout
         self.min = min
         self.max = max
         self.scan = scan
         self.json_data = self._get_json_data()
+        if self.scan:
+            self._prettyprint_available_endpoints(self._get_available_endpoints())
+            exit()
 
     def _get_json_data(self):
         try:
@@ -51,28 +61,37 @@ class CheckJavamelodyHealth(nag.Resource):
         response = response.read().decode('utf-8').replace('\0', '')
         return json.loads(response)
 
+    def _prettyprint_available_endpoints(self, endpoints):
+        print(json.dumps(endpoints, sort_keys=True, indent=4))
+
     def _get_available_endpoints(self):
         valid_endpoint_types = ['http', 'sql', 'jpa', 'ejb', 'spring', 'guice', 'services', 'struts', 'jsf', 'jsp']
-        application_name = self.json_data["list"][0]["application"].split("_")[0]
+        try:
+            application_name = self.json_data["list"][0]["application"].split("_")[0]
+        except (TypeError,IndexError):
+            print("Failed to grab application name from json data.", file=stderr)
+            raise
         endpoints = {"application": application_name,"endpoint_types": []}
-        for endpoint_type in self.json_data["list"]:
-            if endpoint_type.get("name","NONE") not in valid_endpoint_types:
-                continue
-            endpoints["endpoint_types"].append(
-                OrderedDict([("endpoint_type", endpoint_type["name"]),
-                             ("endpoint_size", len(self.json_data["list"][0]["requests"])),
-                             ("requests", OrderedDict())
-                             ])
-            )
-            self._get_available_requests(endpoint_type["name"])
 
-    def _get_available_requests(self, endpoint_type):
+        for endpoint_dict in self.json_data["list"]:
+            if endpoint_dict.get("name","NONE") not in valid_endpoint_types:
+                continue
+            else:
+                endpoints["endpoint_types"].append(
+                    OrderedDict([("endpoint_type", endpoint_dict["name"]),
+                                 ("endpoint_size", len(self.json_data["list"][0]["requests"])),
+                                 ("requests",  self._get_available_requests(endpoint_dict))])
+                )
+        return endpoints
+
+    def _get_available_requests(self, endpoint_dict):
         requests = OrderedDict()
-        #
-        #ENUM für endpoint_type erstellen
-        #
-        for request in self.json_data["list"][0][endpoint_type]["requests"][0]:
-            print(request["name"])
+
+        for recorded_request in endpoint_dict["requests"]:
+            requests[recorded_request[0]] = {}
+            for submetric in ["hits","systemErrors","responseSizesSum","durationsSum"]:
+                requests[recorded_request[0]][submetric] = recorded_request[1][submetric]
+        return requests
 
     def heap_capacity_pct(self):
         part = self.json_data["list"][-1]["memoryInformations"]["usedMemory"]
@@ -192,9 +211,6 @@ class CheckJavamelodyHealth(nag.Resource):
         return round(part / total * 100, 2)
 
     def probe(self):
-        if self.scan:
-            self._get_available_endpoints()
-            exit()
         metric_dict = operator.methodcaller(self.metric)(self)
         if self.min:
             metric_dict["min"] = self.min
@@ -270,7 +286,7 @@ def parse_arguments():
     parser.add_argument('--metric', action='store', required=False,
                         help='Supported keywords: heap_usage')
     parser.add_argument('--scan', action='store_true', default=False,
-                        help='Show ')
+                        help='Show available endpoints')
     parser.add_argument('-v', '--verbose', action='count', default=0,
                         help='increase output verbosity (use up to 3 times)')
     return parser.parse_args()
