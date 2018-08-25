@@ -79,7 +79,7 @@ class CheckJavamelodyHealth(nag.Resource):
             else:
                 endpoints["endpoint_types"].append(
                     OrderedDict([("endpoint_type", endpoint_dict["name"]),
-                                 ("endpoint_size", len(self.json_data["list"][0]["requests"])),
+                                 ("endpoint_size", len(endpoint_dict["requests"])),
                                  ("requests",  self._get_available_requests(endpoint_dict))])
                 )
         return endpoints
