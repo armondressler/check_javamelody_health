@@ -18,15 +18,11 @@ except ImportError:
     exit(3)
 
 
-
 __author__ = "Armon Dressler"
 __license__ = "GPLv3"
 __version__ = "0.4"
 __email__ = "armon.dressler@gmail.com"
 
-
-#check if tmpdir exists, writable
-#chek for json output available
 
 class CheckJavamelodyHealth(nag.Resource):
 
@@ -37,7 +33,9 @@ class CheckJavamelodyHealth(nag.Resource):
                  url_timeout=10,
                  min=None,
                  max=None,
-                 scan=None):
+                 scan=None,
+                 request_path=None,
+                 request_method=None):
 
         self.url_timeout = url_timeout
         self.lapsize_in_secs = 60
@@ -51,8 +49,9 @@ class CheckJavamelodyHealth(nag.Resource):
         if self.scan:
             self._prettyprint_available_endpoints(self._get_available_endpoints())
             exit()
-
+            
     def _get_json_data(self):
+        """Get metrics from javamelody web API"""
         try:
             response = urlopen(self.url, timeout=self.url_timeout)
         except (urllib.error.URLError, TypeError):
@@ -61,113 +60,29 @@ class CheckJavamelodyHealth(nag.Resource):
         response = response.read().decode('utf-8').replace('\0', '')
         return json.loads(response)
 
-    def _prettyprint_available_endpoints(self, endpoints):
-        print(json.dumps(endpoints, sort_keys=True, indent=4))
-
-    def _get_available_endpoints(self):
-        valid_endpoint_types = ['http', 'sql', 'jpa', 'ejb', 'spring', 'guice', 'services', 'struts', 'jsf', 'jsp']
-        try:
-            application_name = self.json_data["list"][0]["application"].split("_")[0]
-        except (TypeError,IndexError):
-            print("Failed to grab application name from json data.", file=stderr)
-            raise
-        endpoints = {"application": application_name,"endpoint_types": []}
-
-        for endpoint_dict in self.json_data["list"]:
-            if endpoint_dict.get("name","NONE") not in valid_endpoint_types:
-                continue
-            else:
-                endpoints["endpoint_types"].append(
-                    OrderedDict([("endpoint_type", endpoint_dict["name"]),
-                                 ("endpoint_size", len(endpoint_dict["requests"])),
-                                 ("requests",  self._get_available_requests(endpoint_dict))])
-                )
-        return endpoints
-
-    def _get_available_requests(self, endpoint_dict):
-        requests = OrderedDict()
-
-        for recorded_request in endpoint_dict["requests"]:
-            requests[recorded_request[0]] = {}
-            for submetric in ["hits","systemErrors","responseSizesSum","durationsSum"]:
-                requests[recorded_request[0]][submetric] = recorded_request[1][submetric]
-        return requests
-
-    def heap_capacity_pct(self):
-        part = self.json_data["list"][-1]["memoryInformations"]["usedMemory"]
-        total = self.json_data["list"][-1]["memoryInformations"]["maxMemory"]
-        return {
-            "value": self._get_percentage(part, total),
-            "name": "heap_memory_pct",
-            "uom": "%",
-            "min": 0,
-            "max": 100}
-
-    def thread_capacity_pct(self):
-        part = self.json_data["list"][-1]["tomcatInformationsList"][0]["currentThreadCount"]
-        total = self.json_data["list"][-1]["tomcatInformationsList"][0]["maxThreads"]
-        return {
-            "value": self._get_percentage(part, total),
-            "name": "thread_capacity_pct",
-            "uom": "%",
-            "min": 0,
-            "max": 100}
-
-    def filedescriptor_capacity_pct(self):
-        part = self.json_data["list"][-1]["unixOpenFileDescriptorCount"]
-        total = self.json_data["list"][-1]["unixMaxFileDescriptorCount"]
-        return {
-            "value": self._get_percentage(part, total),
-            "name": "filedescriptor_capacity_pct",
-            "uom": "%",
-            "min": 0,
-            "max": 100}
-
-    def request_count_timed(self):
-        """ returns an average of total requests received across self.lapsize_in_secs,
-        calculated from a historic value read from a file and the current value from the web interface"""
-
-        current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
-        metric_value = self._evaluate_with_historical_metric("request_count_timed",current_value)
-        self._write_json_metric_to_file("request_count_timed",current_value)
-        return {
-            "value": metric_value,
-            "name": "request_count_timed",
-            "uom": "c",
-            "min": 0}
-
-    def garbagecollection_timed(self):
-        """ returns an average of total required ms of garbage collection time,
-        calculated from a historic value read from a file and the current value from the web interface"""
-
-        current_value = self.json_data["list"][-1]["memoryInformations"]["garbageCollectionTimeMillis"]
-        metric_value = self._evaluate_with_historical_metric("garbagecollection_timed",current_value)
-        self._write_json_metric_to_file("garbagecollection_timed",current_value)
-        return {
-            "value": metric_value,
-            "name": "garbagecollection_timed",
-            "uom": "ms",
-            "min": 0}
-
-
     def _evaluate_with_historical_metric(self,metric,current_value):
+        """Compares metric with numerical value current_value to a value previously stored in a file,
+        as to make metrics such as total request count useful for monitoring."""
         current_time = int(time())
         try:
             _, historic_time, historic_value = self._get_json_metric_from_file(metric)
         except TypeError:
             #upon first execution, no historic value can be compared
             #to prevent extreme values (current_value - 0) we use 0
+            print("No historical value found for metric {} in file {} .".format(
+                metric, join(self.tmpdir, metric)), file=stderr)
             return 0
         else:
             time_difference = current_time - historic_time
+            #prevent ZeroDivisionError
             if time_difference:
-                #prevent ZeroDivisionError
                 metric_value = (current_value - historic_value)/time_difference*self.lapsize_in_secs
                 return round(metric_value, 2)
             else:
                 return 0
 
     def _get_json_metric_from_file(self, metric):
+        """read a metric which has been saved in a file from a previous run of the script"""
         try:
             with open(join(self.tmpdir, metric), "r") as metric_file:
                 try:
@@ -190,15 +105,46 @@ class CheckJavamelodyHealth(nag.Resource):
             print("Failed to write to file at {} .".format(join(self.tmpdir, metric)), file=stderr)
             raise
 
+    def _prettyprint_available_endpoints(self, endpoints):
+        print(json.dumps(endpoints, sort_keys=True, indent=4))
 
-#memoryInformations -> usedNonHeapMemory (nur absolute)
-#memoryInformations -> garbageCollectionTimeMillis
-#tomcatInformationsList -> requestCount
-#scan http endpoints --> "list"[0]["requests"].names()
-#dokumentieren + tests ...
-#http://10.21.2.2:8180/triboni/cpx-admin/javamelody?period=jour&part=heaphisto
-#https://github.com/sbower/nagios_javamelody_plugin/blob/master/src/main/java/advws/net/nagios/jmeoldy/core/CheckJMelody.java
+    def _get_available_endpoints(self, endpoint_type=None):
+        """Javamelody presents several metrics of type valid_endpoint_types , e.g. for http these might encompass
+        requests to different paths"""
+        if isinstance(endpoint_type, str):
+            endpoint_type = [endpoint_type]
+        valid_endpoint_types = ['http', 'sql', 'jpa', 'ejb', 'spring',
+                                'guice', 'services', 'struts', 'jsf',
+                                'jsp'] if not endpoint_type else endpoint_type
+        try:
+            application_name = self.json_data["list"][0]["application"].split("_")[0]
+        except (TypeError,IndexError):
+            print("Failed to grab application name from json data.", file=stderr)
+            raise
+        endpoints = {"application": application_name,"endpoint_types": []}
 
+        for endpoint_dict in self.json_data["list"]:
+            if endpoint_dict.get("name","NONE") not in valid_endpoint_types:
+                continue
+            else:
+                endpoints["endpoint_types"].append(
+                    OrderedDict([("endpoint_type", endpoint_dict["name"]),
+                                 ("endpoint_size", len(endpoint_dict["requests"])),
+                                 ("requests",  self._get_available_requests(endpoint_dict))])
+                )
+        return endpoints
+
+    def _get_available_requests(self, endpoint_dict):
+        """returns a dict of requests and removes some clutter in their metrics"""
+        requests = OrderedDict()
+        interesting_submetrics = ["hits", "systemErrors", "responseSizesSum", "durationsSum"]
+
+        for recorded_request in endpoint_dict["requests"]:
+            requests[recorded_request[0]] = {}
+            for submetric in interesting_submetrics:
+                requests[recorded_request[0]][submetric] = recorded_request[1][submetric]
+        return requests
+    
     def _get_percentage(self, part, total):
         try:
             part = sum(part)
@@ -223,15 +169,101 @@ class CheckJavamelodyHealth(nag.Resource):
                           max=metric_dict.get("max"),
                           context=metric_dict.get("context"))
 
+    def heap_capacity_pct(self):
+        part = self.json_data["list"][-1]["memoryInformations"]["usedMemory"]
+        total = self.json_data["list"][-1]["memoryInformations"]["maxMemory"]
+        return {
+            "value": self._get_percentage(part, total),
+            "name": "heap_memory_pct",
+            "uom": "%",
+            "min": 0,
+            "max": 100}
+
+    def thread_capacity_pct(self):
+        part = self.json_data["list"][-1]["tomcatInformationsList"][0]["currentThreadCount"]
+        total = self.json_data["list"][-1]["tomcatInformationsList"][0]["maxThreads"]
+        return {
+            "value": self._get_percentage(part, total),
+            "name": "thread_capacity_pct",
+            "uom": "%",
+            "min": 0,
+            "max": 100}
+
+    def file_descriptor_capacity_pct(self):
+        part = self.json_data["list"][-1]["unixOpenFileDescriptorCount"]
+        total = self.json_data["list"][-1]["unixMaxFileDescriptorCount"]
+        return {
+            "value": self._get_percentage(part, total),
+            "name": "file_descriptor_capacity_pct",
+            "uom": "%",
+            "min": 0,
+            "max": 100}
+
+    def nonheap_memory_usage_total(self):
+        """return the total usage of memory not allocated on the jvm heap in MB"""
+
+        metric_value = self.json_data["list"][-1]["memoryInformations"]["usedNonHeapMemory"]
+        metric_value /= 1024 ** 2
+        return {
+            "value": metric_value,
+            "name": "usedNonHeapMemory",
+            "uom": "MB",
+            "min": 0}
+
+    def request_count_timed(self):
+        """ returns an average of total requests received across self.lapsize_in_secs,
+        calculated from a historic value read from a file and the current value from the web interface"""
+
+        current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
+        metric_value = self._evaluate_with_historical_metric("request_count_timed",current_value)
+        self._write_json_metric_to_file("request_count_timed",current_value)
+        return {
+            "value": metric_value,
+            "name": "request_count_timed",
+            "uom": "c",
+            "min": 0}
+
+    def error_count_timed(self):
+        """ returns an average of total errors encountered across self.lapsize_in_secs,
+        calculated from a historic value read from a file and the current value from the web interface"""
+
+        current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["errorCount"]
+        metric_value = self._evaluate_with_historical_metric("error_count_timed",current_value)
+        self._write_json_metric_to_file("error_count_timed",current_value)
+        return {
+            "value": metric_value,
+            "name": "error_count_timed",
+            "uom": "c",
+            "min": 0}
+
+    def garbage_collection_timed(self):
+        """ returns an average of total required ms of garbage collection time,
+        calculated from a historic value read from a file and the current value from the web interface"""
+
+        current_value = self.json_data["list"][-1]["memoryInformations"]["garbageCollectionTimeMillis"]
+        metric_value = self._evaluate_with_historical_metric("garbage_collection_timed",current_value)
+        self._write_json_metric_to_file("garbage_collection_timed",current_value)
+        return {
+            "value": metric_value,
+            "name": "garbage_collection_timed",
+            "uom": "ms",
+            "min": 0}
+
+
+#dokumentieren + tests ...
+#http://10.21.2.2:8180/triboni/cpx-admin/javamelody?period=jour&part=heaphisto
+#https://github.com/sbower/nagios_javamelody_plugin/blob/master/src/main/java/advws/net/nagios/jmeoldy/core/CheckJMelody.java
+
 
 class CheckJavamelodyHealthContext(nag.ScalarContext):
     fmt_helper = {
         "heap_memory_pct": "{value}{uom} of total heap capacity in use.",
         "thread_capacity_pct": "{value}{uom} of max threads reached.",
-        "filedescriptor_capacity_pct": "{value}{uom} of max file descriptors in use.",
+        "file_descriptor_capacity_pct": "{value}{uom} of max file descriptors in use.",
+        "nonheap_memory_usage_total": "{value}{uom} for the last minute.",
         "request_count_timed": "{value} requests per minute received.",
-        "garbagecollection_timed": "{value}{uom} spent on gc for the last minute."
-    }
+        "garbage_collection_timed": "{value}{uom} spent on gc for the last minute.",
+        "error_count_timed": "{value} errors encountered per minute ."}
 
     def __init__(self, name, warning=None, critical=None,
                  fmt_metric='{name} is {valueunit}', result_cls=nag.Result):
@@ -283,12 +315,15 @@ def parse_arguments():
                         help='maximum value for performance data')
     parser.add_argument('--min', action='store', default=None,
                         help='minimum value for performance data')
-    parser.add_argument('--metric', action='store', required=False,
-                        help='Supported keywords: heap_usage')
-    parser.add_argument('--scan', action='store_true', default=False,
-                        help='Show available endpoints')
     parser.add_argument('-v', '--verbose', action='count', default=0,
                         help='increase output verbosity (use up to 3 times)')
+    parser.add_argument('-p', '--request-path', action='store', default=None,
+                        help='path to request, e.g. /users/list or /index.html ,\
+                         see --scan option to list available paths')
+    parser.add_argument('-m', '--request-method', action='store', default="GET", help='e.g. GET, POST, PUT ...')
+    execution_mode = parser.add_mutually_exclusive_group(required=True)
+    execution_mode.add_argument('--metric', action='store', required=False, help='Supported keywords: heap_usage')
+    execution_mode.add_argument('--scan', action='store_true', default=False, help='Show available endpoints')
     return parser.parse_args()
 
 
@@ -302,7 +337,9 @@ def main():
             url=args.url,
             min=args.min,
             max=args.max,
-            scan=args.scan),
+            scan=args.scan,
+            request_path=args.request_path,
+            request_method=args.request_method),
         CheckJavamelodyHealthContext(args.metric, warning=args.warning, critical=args.critical),
         CheckJavamelodyHealthSummary(args.url))
     check.main(verbose=args.verbose)
