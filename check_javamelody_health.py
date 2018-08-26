@@ -7,7 +7,8 @@ from urllib.request import urlopen
 import urllib.error
 from sys import stderr
 from collections import OrderedDict
-from os.path import join
+from os.path import join,exists,isdir
+from os import makedirs
 from time import time
 
 try:
@@ -35,7 +36,8 @@ class CheckJavamelodyHealth(nag.Resource):
                  max=None,
                  scan=None,
                  request_path=None,
-                 request_method=None):
+                 request_method=None,
+                 endpoint_type=None):
 
         self.url_timeout = url_timeout
         self.lapsize_in_secs = 60
@@ -45,6 +47,9 @@ class CheckJavamelodyHealth(nag.Resource):
         self.min = min
         self.max = max
         self.scan = scan
+        self.request_path = request_path
+        self.request_method = request_method
+        self.endpoint_type = endpoint_type
         self.json_data = self._get_json_data()
         if self.scan:
             self._prettyprint_available_endpoints(self._get_available_endpoints())
@@ -54,7 +59,7 @@ class CheckJavamelodyHealth(nag.Resource):
         """Get metrics from javamelody web API"""
         try:
             response = urlopen(self.url, timeout=self.url_timeout)
-        except (urllib.error.URLError, TypeError):
+        except (urllib.error.HTTPError, urllib.error.URLError, TypeError):
             print("Failed to grab data from {} .".format(self.url), file=stderr)
             raise
         response = response.read().decode('utf-8').replace('\0', '')
@@ -95,15 +100,26 @@ class CheckJavamelodyHealth(nag.Resource):
         except FileNotFoundError:
             print("Failed to open file at {} .".format(join(self.tmpdir, metric)), file=stderr)
             return None
+        except PermissionError:
+            print("Failed to open file at {} missing permission.".format(join(self.tmpdir, metric)), file=stderr)
+            return None
 
     def _write_json_metric_to_file(self, metric, value):
+        """also tries to create dir if it doesnt exist already"""
         current_unixtime = int(time())
+        try:
+            if not isdir(self.tmpdir):
+                makedirs(self.tmpdir, exist_ok=True)
+        except PermissionError:
+            print("Failed to create directory {} .".format(self.tmpdir), file=stderr)
+            raise
         try:
             with open(join(self.tmpdir, metric), "w") as metric_file:
                 json.dump((metric, current_unixtime, value), metric_file)
-        except IOError:
+        except (IOError,PermissionError,NotADirectoryError):
             print("Failed to write to file at {} .".format(join(self.tmpdir, metric)), file=stderr)
             raise
+
 
     def _prettyprint_available_endpoints(self, endpoints):
         print(json.dumps(endpoints, sort_keys=True, indent=4))
@@ -124,22 +140,28 @@ class CheckJavamelodyHealth(nag.Resource):
         endpoints = {"application": application_name,"endpoint_types": []}
 
         for endpoint_dict in self.json_data["list"]:
-            if endpoint_dict.get("name","NONE") not in valid_endpoint_types:
+            if endpoint_dict.get("name", "NONE") not in valid_endpoint_types:
                 continue
             else:
                 endpoints["endpoint_types"].append(
                     OrderedDict([("endpoint_type", endpoint_dict["name"]),
                                  ("endpoint_size", len(endpoint_dict["requests"])),
-                                 ("requests",  self._get_available_requests(endpoint_dict))])
+                                 ("requests",  self._get_available_requests(endpoint_dict,
+                                                                            specific_path=self.request_path,
+                                                                            specific_method=self.request_method))]
+                                )
                 )
         return endpoints
 
-    def _get_available_requests(self, endpoint_dict):
+    def _get_available_requests(self, endpoint_dict, specific_path=None, specific_method=None):
         """returns a dict of requests and removes some clutter in their metrics"""
         requests = OrderedDict()
         interesting_submetrics = ["hits", "systemErrors", "responseSizesSum", "durationsSum"]
+        joined_request_path = " ".join([specific_path, specific_method]) if specific_path else None
 
         for recorded_request in endpoint_dict["requests"]:
+            if joined_request_path and recorded_request[0] != joined_request_path:
+                continue
             requests[recorded_request[0]] = {}
             for submetric in interesting_submetrics:
                 requests[recorded_request[0]][submetric] = recorded_request[1][submetric]
@@ -174,7 +196,7 @@ class CheckJavamelodyHealth(nag.Resource):
         total = self.json_data["list"][-1]["memoryInformations"]["maxMemory"]
         return {
             "value": self._get_percentage(part, total),
-            "name": "heap_memory_pct",
+            "name": "heap_capacity_pct",
             "uom": "%",
             "min": 0,
             "max": 100}
@@ -205,9 +227,74 @@ class CheckJavamelodyHealth(nag.Resource):
         metric_value = self.json_data["list"][-1]["memoryInformations"]["usedNonHeapMemory"]
         metric_value /= 1024 ** 2
         return {
-            "value": metric_value,
-            "name": "usedNonHeapMemory",
+            "value": round(metric_value, 2),
+            "name": "nonheap_memory_usage_total",
             "uom": "MB",
+            "min": 0}
+
+    def duration_per_hit_on_path(self):
+        endpoint = self._get_available_endpoints(endpoint_type=self.endpoint_type)
+        joined_request_path = " ".join([self.request_path, self.request_method])
+
+        try:
+            duration_sum_in_ms = endpoint["endpoint_types"][0]["requests"][joined_request_path]["durationsSum"]
+            total_hits = endpoint["endpoint_types"][0]["requests"][joined_request_path]["hits"]
+        except (KeyError,IndexError):
+            print("Error looking up request metrics for path {} and method {}.".format(
+                self.request_path, self.request_method), file=stderr)
+            raise
+        try:
+            metric_value = round(duration_sum_in_ms / total_hits, 1)
+        except ZeroDivisionError:
+            metric_value = 0
+
+        return {
+            "value": metric_value,
+            "name": "duration_per_hit_on_path",
+            "uom": "ms",
+            "min": 0}
+
+    def errors_per_hit_on_path(self):
+        endpoint = self._get_available_endpoints(endpoint_type=self.endpoint_type)
+        joined_request_path = " ".join([self.request_path, self.request_method])
+
+        try:
+            total_errors = endpoint["endpoint_types"][0]["requests"][joined_request_path]["systemErrors"]
+            total_hits = endpoint["endpoint_types"][0]["requests"][joined_request_path]["hits"]
+        except (KeyError,IndexError):
+            print("Error looking up request metrics for path {} and method {}.".format(
+                self.request_path, self.request_method), file=stderr)
+            raise
+
+        metric_value = self._get_percentage(total_errors, total_hits)
+        return {
+            "value": metric_value,
+            "name": "errors_per_hit_on_path",
+            "uom": "%",
+            "min": 0,
+            "max": 100}
+
+    def response_size_per_hit_on_path(self):
+        endpoint = self._get_available_endpoints(endpoint_type=self.endpoint_type)
+        joined_request_path = " ".join([self.request_path, self.request_method])
+
+        try:
+            total_response_size = endpoint["endpoint_types"][0]["requests"][joined_request_path]["responseSizesSum"]
+            total_hits = endpoint["endpoint_types"][0]["requests"][joined_request_path]["hits"]
+        except (KeyError,IndexError):
+            print("Error looking up request metrics for path {} and method {}.".format(
+                self.request_path, self.request_method), file=stderr)
+            raise
+
+        try:
+            metric_value = round((total_response_size / total_hits)/1024, 2)
+        except ZeroDivisionError:
+            metric_value = 0
+
+        return {
+            "value": metric_value,
+            "name": "response_size_per_hit_on_path",
+            "uom": "kB",
             "min": 0}
 
     def request_count_timed(self):
@@ -215,8 +302,8 @@ class CheckJavamelodyHealth(nag.Resource):
         calculated from a historic value read from a file and the current value from the web interface"""
 
         current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
-        metric_value = self._evaluate_with_historical_metric("request_count_timed",current_value)
-        self._write_json_metric_to_file("request_count_timed",current_value)
+        metric_value = self._evaluate_with_historical_metric("request_count_timed", current_value)
+        self._write_json_metric_to_file("request_count_timed", current_value)
         return {
             "value": metric_value,
             "name": "request_count_timed",
@@ -229,7 +316,7 @@ class CheckJavamelodyHealth(nag.Resource):
 
         current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["errorCount"]
         metric_value = self._evaluate_with_historical_metric("error_count_timed",current_value)
-        self._write_json_metric_to_file("error_count_timed",current_value)
+        self._write_json_metric_to_file("error_count_timed", current_value)
         return {
             "value": metric_value,
             "name": "error_count_timed",
@@ -250,20 +337,18 @@ class CheckJavamelodyHealth(nag.Resource):
             "min": 0}
 
 
-#dokumentieren + tests ...
-#http://10.21.2.2:8180/triboni/cpx-admin/javamelody?period=jour&part=heaphisto
-#https://github.com/sbower/nagios_javamelody_plugin/blob/master/src/main/java/advws/net/nagios/jmeoldy/core/CheckJMelody.java
-
-
 class CheckJavamelodyHealthContext(nag.ScalarContext):
     fmt_helper = {
-        "heap_memory_pct": "{value}{uom} of total heap capacity in use.",
-        "thread_capacity_pct": "{value}{uom} of max threads reached.",
+        "heap_capacity_pct": "{value}{uom} of heap capacity exhausted.",
+        "thread_capacity_pct": "{value}{uom} of thread capacity exhausted.",
         "file_descriptor_capacity_pct": "{value}{uom} of max file descriptors in use.",
         "nonheap_memory_usage_total": "{value}{uom} for the last minute.",
         "request_count_timed": "{value} requests per minute received.",
         "garbage_collection_timed": "{value}{uom} spent on gc for the last minute.",
-        "error_count_timed": "{value} errors encountered per minute ."}
+        "error_count_timed": "{value} errors encountered per minute .",
+        "duration_per_hit_on_path": "{value}{uom} needed on average.",
+        "errors_per_hit_on_path": "{value}{uom} of requests failed.",
+        "response_size_per_hit_on_path": "average response size at {value}{uom} ."}
 
     def __init__(self, name, warning=None, critical=None,
                  fmt_metric='{name} is {valueunit}', result_cls=nag.Result):
@@ -320,10 +405,13 @@ def parse_arguments():
     parser.add_argument('-p', '--request-path', action='store', default=None,
                         help='path to request, e.g. /users/list or /index.html ,\
                          see --scan option to list available paths')
+    parser.add_argument('-e', '--endpoint-type', action='store', default="http",
+                        help='type of request wanted, e.g. http, sql, jpa . Use --scan for listing.')
     parser.add_argument('-m', '--request-method', action='store', default="GET", help='e.g. GET, POST, PUT ...')
     execution_mode = parser.add_mutually_exclusive_group(required=True)
     execution_mode.add_argument('--metric', action='store', required=False, help='Supported keywords: heap_usage')
     execution_mode.add_argument('--scan', action='store_true', default=False, help='Show available endpoints')
+
     return parser.parse_args()
 
 
@@ -339,7 +427,8 @@ def main():
             max=args.max,
             scan=args.scan,
             request_path=args.request_path,
-            request_method=args.request_method),
+            request_method=args.request_method,
+            endpoint_type=args.endpoint_type),
         CheckJavamelodyHealthContext(args.metric, warning=args.warning, critical=args.critical),
         CheckJavamelodyHealthSummary(args.url))
     check.main(verbose=args.verbose)
