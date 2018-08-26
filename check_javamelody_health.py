@@ -342,7 +342,7 @@ class CheckJavamelodyHealthContext(nag.ScalarContext):
         "heap_capacity_pct": "{value}{uom} of heap capacity exhausted.",
         "thread_capacity_pct": "{value}{uom} of thread capacity exhausted.",
         "file_descriptor_capacity_pct": "{value}{uom} of max file descriptors in use.",
-        "nonheap_memory_usage_total": "{value}{uom} for the last minute.",
+        "nonheap_memory_usage_total": "{value}{uom} currently in use.",
         "request_count_timed": "{value} requests per minute received.",
         "garbage_collection_timed": "{value}{uom} spent on gc for the last minute.",
         "error_count_timed": "{value} errors encountered per minute .",
@@ -392,14 +392,14 @@ def parse_arguments():
     parser.add_argument('-c', '--critical', metavar='RANGE', default='',
                         help='return critical if metric is outside RANGE,\
                             RANGE is defined as an number or an interval, e.g. 5:25 or :30  or 95:')
-    parser.add_argument('-t', '--tmpdir', action='store', default='/tmp/check_javamelody_health',
-                        help='path to directory to store delta files')
-    parser.add_argument('-u', '--url', action='store',
-                        help='url for javamelody instance, e.g. http://internal.example.com/sampleapp/javamelody')
     parser.add_argument('--max', action='store', default=None,
                         help='maximum value for performance data')
     parser.add_argument('--min', action='store', default=None,
                         help='minimum value for performance data')
+    parser.add_argument('-t', '--tmpdir', action='store', default='/tmp/check_javamelody_health',
+                        help='path to directory to store delta files')
+    parser.add_argument('-u', '--url', action='store',
+                        help='url for javamelody instance, e.g. http://internal.example.com/sampleapp/javamelody')
     parser.add_argument('-v', '--verbose', action='count', default=0,
                         help='increase output verbosity (use up to 3 times)')
     parser.add_argument('-p', '--request-path', action='store', default=None,
@@ -407,9 +407,11 @@ def parse_arguments():
                          see --scan option to list available paths')
     parser.add_argument('-e', '--endpoint-type', action='store', default="http",
                         help='type of request wanted, e.g. http, sql, jpa . Use --scan for listing.')
-    parser.add_argument('-m', '--request-method', action='store', default="GET", help='e.g. GET, POST, PUT ...')
+    parser.add_argument('-m', '--request-method', action='store', default="GET",
+                        help='e.g. http verbs: GET, POST, PUT ...')
     execution_mode = parser.add_mutually_exclusive_group(required=True)
-    execution_mode.add_argument('--metric', action='store', required=False, help='Supported keywords: heap_usage')
+    execution_mode.add_argument('--metric', action='store', required=False, help='Supported keywords: {}'.format(
+        ", ".join(CheckJavamelodyHealthContext.fmt_helper.keys())))
     execution_mode.add_argument('--scan', action='store_true', default=False, help='Show available endpoints')
 
     return parser.parse_args()
