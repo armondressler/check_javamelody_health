@@ -223,13 +223,21 @@ class CheckJavamelodyHealth(nag.Resource):
 
     def nonheap_memory_usage_total(self):
         """return the total usage of memory not allocated on the jvm heap in MB"""
-
         metric_value = self.json_data["list"][-1]["memoryInformations"]["usedNonHeapMemory"]
         metric_value /= 1024 ** 2
         return {
             "value": round(metric_value, 2),
             "name": "nonheap_memory_usage_total",
             "uom": "MB",
+            "min": 0}
+
+    def loaded_classes_count_total(self):
+        """ returns currently loaded amount of classes..."""
+        metric_value = self.json_data["list"][-1]["memoryInformations"]["loadedClassesCount"]
+        return {
+            "value": metric_value,
+            "name": "loaded_classes_count_total",
+            "uom": "c",
             "min": 0}
 
     def duration_per_hit_on_path(self):
@@ -343,6 +351,7 @@ class CheckJavamelodyHealthContext(nag.ScalarContext):
         "thread_capacity_pct": "{value}{uom} of thread capacity exhausted.",
         "file_descriptor_capacity_pct": "{value}{uom} of max file descriptors in use.",
         "nonheap_memory_usage_total": "{value}{uom} currently in use.",
+        "loaded_classes_count_total": "{value} classes currently loaded.",
         "request_count_timed": "{value} requests per minute received.",
         "garbage_collection_timed": "{value}{uom} spent on gc for the last minute.",
         "error_count_timed": "{value} errors encountered per minute .",
