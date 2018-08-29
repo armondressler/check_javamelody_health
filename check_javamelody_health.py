@@ -86,26 +86,39 @@ class CheckJavamelodyHealth(nag.Resource):
             else:
                 return 0
 
+    def _get_tmpdir_file_prefix(self):
+        return self.json_data["list"][-1]["pid"]
+
+    def _get_absolute_path_for_tmpfile(self, metric):
+        try:
+            return self.tmpfile_absolute_path
+        except AttributeError:
+            filename = "_".join([self._get_tmpdir_file_prefix(), metric])
+            self.tmpfile_absolute_path = join(self.tmpdir, filename)
+            return self.tmpfile_absolute_path
+
     def _get_json_metric_from_file(self, metric):
         """read a metric which has been saved in a file from a previous run of the script"""
+        absolute_filepath = self._get_absolute_path_for_tmpfile(metric)
         try:
-            with open(join(self.tmpdir, metric), "r") as metric_file:
+            with open(absolute_filepath, "r") as metric_file:
                 try:
                     metric_data = json.load(metric_file)
                 except TypeError:
-                    print("Failed to read json from file at {} .".format(join(self.tmpdir, metric)), file=stderr)
+                    print("Failed to read json from file at {} .".format(absolute_filepath), file=stderr)
                     return None
                 else:
                     return metric_data
         except FileNotFoundError:
-            print("Failed to open file at {} .".format(join(self.tmpdir, metric)), file=stderr)
+            print("Failed to open file at {} .".format(absolute_filepath), file=stderr)
             return None
         except PermissionError:
-            print("Failed to open file at {} missing permission.".format(join(self.tmpdir, metric)), file=stderr)
+            print("Failed to open file at {} missing permission.".format(absolute_filepath), file=stderr)
             return None
 
     def _write_json_metric_to_file(self, metric, value):
         """also tries to create dir if it doesnt exist already"""
+        absolute_filepath = self._get_absolute_path_for_tmpfile(metric)
         current_unixtime = int(time())
         try:
             if not isdir(self.tmpdir):
@@ -114,12 +127,11 @@ class CheckJavamelodyHealth(nag.Resource):
             print("Failed to create directory {} .".format(self.tmpdir), file=stderr)
             raise
         try:
-            with open(join(self.tmpdir, metric), "w") as metric_file:
+            with open(absolute_filepath, "w") as metric_file:
                 json.dump((metric, current_unixtime, value), metric_file)
         except (IOError,PermissionError,NotADirectoryError):
-            print("Failed to write to file at {} .".format(join(self.tmpdir, metric)), file=stderr)
+            print("Failed to write to file at {} .".format(absolute_filepath), file=stderr)
             raise
-
 
     def _prettyprint_available_endpoints(self, endpoints):
         print(json.dumps(endpoints, sort_keys=True, indent=4))
