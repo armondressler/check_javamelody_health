@@ -15,6 +15,8 @@ Refer to https://github.com/javamelody/javamelody/wiki/UserGuide#5-supplements-i
 
 javamelody isn't ressource hungry, so running the plugin every 10 secs won't be an issue even on smaller setups. Make sure to test yourself though.
 
+For an icinga2 sample config, see directory "icinga2_sample_configs".
+
 
 ### Basic Usage:
 
