@@ -1,5 +1,5 @@
 ## check_javamelody_health
-#### Nagios compiant monitoring script to report metrics from jvms using javamelody
+#### Nagios compliant monitoring script to report metrics from jvms using javamelody
 
 The installation requires python3 and the module "nagiosplugin" (by Christian Kauhaus). Further requirements are javamelody (duh) and the xstream library for JSON exports. You can check for a working setup like so:
 wget 'mytomcat.example.local:8180/myapp/javamelody?format=json' 
