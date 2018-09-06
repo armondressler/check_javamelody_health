@@ -21,7 +21,7 @@ except ImportError:
 
 __author__ = "Armon Dressler"
 __license__ = "GPLv3"
-__version__ = "0.4"
+__version__ = "0.5"
 __email__ = "armon.dressler@gmail.com"
 
 
