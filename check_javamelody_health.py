@@ -188,7 +188,11 @@ class CheckJavamelodyHealth(nag.Resource):
             total = sum(total)
         except TypeError:
             pass
-        return round(part / total * 100, 2)
+        try:
+            ret_val = round(part / total * 100, 2)
+        except ZeroDivisionError:
+            ret_val = 0
+        return ret_val
 
     def probe(self):
         metric_dict = operator.methodcaller(self.metric)(self)
@@ -260,9 +264,8 @@ class CheckJavamelodyHealth(nag.Resource):
             duration_sum_in_ms = endpoint["endpoint_types"][0]["requests"][joined_request_path]["durationsSum"]
             total_hits = endpoint["endpoint_types"][0]["requests"][joined_request_path]["hits"]
         except (KeyError,IndexError):
-            print("Error looking up request metrics for path {} and method {}.".format(
-                self.request_path, self.request_method), file=stderr)
-            raise
+            #prevent UNKNOWN status when javamelody stats are reset
+            duration_sum_in_ms = total_hits = 0
         try:
             metric_value = round(duration_sum_in_ms / total_hits, 1)
         except ZeroDivisionError:
@@ -282,9 +285,8 @@ class CheckJavamelodyHealth(nag.Resource):
             total_errors = endpoint["endpoint_types"][0]["requests"][joined_request_path]["systemErrors"]
             total_hits = endpoint["endpoint_types"][0]["requests"][joined_request_path]["hits"]
         except (KeyError,IndexError):
-            print("Error looking up request metrics for path {} and method {}.".format(
-                self.request_path, self.request_method), file=stderr)
-            raise
+            #prevent UNKNOWN status when javamelody stats are reset
+            total_errors = total_hits = 0
 
         metric_value = self._get_percentage(total_errors, total_hits)
         return {
@@ -302,10 +304,8 @@ class CheckJavamelodyHealth(nag.Resource):
             total_response_size = endpoint["endpoint_types"][0]["requests"][joined_request_path]["responseSizesSum"]
             total_hits = endpoint["endpoint_types"][0]["requests"][joined_request_path]["hits"]
         except (KeyError,IndexError):
-            print("Error looking up request metrics for path {} and method {}.".format(
-                self.request_path, self.request_method), file=stderr)
-            raise
-
+            #prevent UNKNOWN status when javamelody stats are reset
+            total_response_size = total_hits = 0
         try:
             metric_value = round((total_response_size / total_hits)/1024, 2)
         except ZeroDivisionError:
