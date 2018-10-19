@@ -55,8 +55,11 @@ class CheckJavamelodyHealth(nag.Resource):
             self._prettyprint_available_endpoints(self._get_available_endpoints())
             exit()
             
-    def _get_json_data(self):
-        """Get metrics from javamelody web API"""
+    def _get_json_data(self,part=None):
+        """Get metrics from javamelody web API
+        valid values for part are listed under https://github.com/javamelody/javamelody/wiki/ExternalAPI#xml"""
+        valid_parts = ["threads", "counterSummaryPerClass", "heaphisto", "sessions",
+                       "mbeans", "jndi", "processes", "connections", "jvm", "database"]
         try:
             response = urlopen(self.url, timeout=self.url_timeout)
         except (urllib.error.HTTPError, urllib.error.URLError, TypeError):
