@@ -43,7 +43,8 @@ class CheckJavamelodyHealth(nag.Resource):
         self.lapsize_in_secs = 60
         self.metric = metric
         self.tmpdir = tmpdir
-        self.url = url + "?format=json&period=jour" #TODO http://10.21.2.253:8180/sample/monitoring?format=json&period=tout
+        self.url = url #+ "?format=json&period=jour" #TODO http://10.21.2.253:8180/sample/monitoring?format=json&period=tout
+        self.uri_query = [("format", "json"), ("period", "jour")]
         self.min = min
         self.max = max
         self.scan = scan
@@ -58,8 +59,12 @@ class CheckJavamelodyHealth(nag.Resource):
     def _get_json_data(self,part=None):
         """Get metrics from javamelody web API
         valid values for part are listed under https://github.com/javamelody/javamelody/wiki/ExternalAPI#xml"""
-        valid_parts = ["threads", "counterSummaryPerClass", "heaphisto", "sessions",
-                       "mbeans", "jndi", "processes", "connections", "jvm", "database"]
+        #valid_parts = ["threads", "counterSummaryPerClass", "heaphisto", "sessions",
+        #               "mbeans", "jndi", "processes", "connections", "jvm", "database"]
+
+        if part:
+            self.uri_query.append(("part", part))
+        self.url = self.url + "?" + self.uri_query
         try:
             response = urlopen(self.url, timeout=self.url_timeout)
         except (urllib.error.HTTPError, urllib.error.URLError, TypeError):
