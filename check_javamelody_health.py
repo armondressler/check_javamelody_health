@@ -64,7 +64,7 @@ class CheckJavamelodyHealth(nag.Resource):
 
         if part:
             self.uri_query.append(("part", part))
-        self.url = self.url + "?" + self.uri_query
+        self.url = self.url + "?" + "&".join([ item[0] + "=" + item[1] for item in self.uri_query])
         try:
             response = urlopen(self.url, timeout=self.url_timeout)
         except (urllib.error.HTTPError, urllib.error.URLError, TypeError):
