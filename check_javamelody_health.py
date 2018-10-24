@@ -43,7 +43,7 @@ class CheckJavamelodyHealth(nag.Resource):
         self.lapsize_in_secs = 60
         self.metric = metric
         self.tmpdir = tmpdir
-        self.url = url #+ "?format=json&period=jour" #TODO http://10.21.2.253:8180/sample/monitoring?format=json&period=tout
+        self.url = url #+ "?format=json&period=jour"
         self.uri_query = [("format", "json"), ("period", "jour")]
         self.min = min
         self.max = max
@@ -51,20 +51,21 @@ class CheckJavamelodyHealth(nag.Resource):
         self.request_path = request_path
         self.request_method = request_method
         self.endpoint_type = endpoint_type
-        self.json_data = self._get_json_data()
         if self.scan:
             self._prettyprint_available_endpoints(self._get_available_endpoints())
             exit()
             
     def _get_json_data(self,part=None):
         """Get metrics from javamelody web API
+        grabbing values from the api can get expensive, depending on the amount of requests recorded
+        therefore we try to only grab the parts required for the requested metric
         valid values for part are listed under https://github.com/javamelody/javamelody/wiki/ExternalAPI#xml"""
         #valid_parts = ["threads", "counterSummaryPerClass", "heaphisto", "sessions",
         #               "mbeans", "jndi", "processes", "connections", "jvm", "database"]
 
         if part:
             self.uri_query.append(("part", part))
-        self.url = self.url + "?" + "&".join([ item[0] + "=" + item[1] for item in self.uri_query])
+        self.url = self.url + "?" + "&".join([item[0] + "=" + item[1] for item in self.uri_query])
         try:
             response = urlopen(self.url, timeout=self.url_timeout)
         except (urllib.error.HTTPError, urllib.error.URLError, TypeError):
@@ -152,14 +153,15 @@ class CheckJavamelodyHealth(nag.Resource):
         valid_endpoint_types = ['http', 'sql', 'jpa', 'ejb', 'spring',
                                 'guice', 'services', 'struts', 'jsf',
                                 'jsp'] if not endpoint_type else endpoint_type
+        json_data = self._get_json_data()
         try:
-            application_name = self.json_data["list"][0]["application"].split("_")[0]
+            application_name = json_data["list"][0]["application"].split("_")[0]
         except (TypeError,IndexError):
             print("Failed to grab application name from json data.", file=stderr)
             raise
         endpoints = {"application": application_name,"endpoint_types": []}
 
-        for endpoint_dict in self.json_data["list"]:
+        for endpoint_dict in json_data["list"]:
             if endpoint_dict.get("name", "NONE") not in valid_endpoint_types:
                 continue
             else:
@@ -216,8 +218,9 @@ class CheckJavamelodyHealth(nag.Resource):
                           context=metric_dict.get("context"))
 
     def heap_capacity_pct(self):
-        part = self.json_data["list"][-1]["memoryInformations"]["usedMemory"]
-        total = self.json_data["list"][-1]["memoryInformations"]["maxMemory"]
+        json_data = self._get_json_data("jvm")
+        part = json_data["list"][-1]["memoryInformations"]["usedMemory"]
+        total = json_data["list"][-1]["memoryInformations"]["maxMemory"]
         return {
             "value": self._get_percentage(part, total),
             "name": "heap_capacity_pct",
@@ -226,8 +229,9 @@ class CheckJavamelodyHealth(nag.Resource):
             "max": 100}
 
     def thread_capacity_pct(self):
-        part = self.json_data["list"][-1]["tomcatInformationsList"][0]["currentThreadCount"]
-        total = self.json_data["list"][-1]["tomcatInformationsList"][0]["maxThreads"]
+        json_data = self._get_json_data("jvm")
+        part = json_data["list"][-1]["tomcatInformationsList"][0]["currentThreadCount"]
+        total = json_data["list"][-1]["tomcatInformationsList"][0]["maxThreads"]
         return {
             "value": self._get_percentage(part, total),
             "name": "thread_capacity_pct",
@@ -236,8 +240,9 @@ class CheckJavamelodyHealth(nag.Resource):
             "max": 100}
 
     def file_descriptor_capacity_pct(self):
-        part = self.json_data["list"][-1]["unixOpenFileDescriptorCount"]
-        total = self.json_data["list"][-1]["unixMaxFileDescriptorCount"]
+        json_data = self._get_json_data("jvm")
+        part = json_data["list"][-1]["unixOpenFileDescriptorCount"]
+        total = json_data["list"][-1]["unixMaxFileDescriptorCount"]
         return {
             "value": self._get_percentage(part, total),
             "name": "file_descriptor_capacity_pct",
@@ -247,7 +252,8 @@ class CheckJavamelodyHealth(nag.Resource):
 
     def nonheap_memory_usage_total(self):
         """return the total usage of memory not allocated on the jvm heap in MB"""
-        metric_value = self.json_data["list"][-1]["memoryInformations"]["usedNonHeapMemory"]
+        json_data = self._get_json_data("jvm")
+        metric_value = json_data["list"][-1]["memoryInformations"]["usedNonHeapMemory"]
         metric_value /= 1024 ** 2
         return {
             "value": round(metric_value, 2),
@@ -257,7 +263,8 @@ class CheckJavamelodyHealth(nag.Resource):
 
     def loaded_classes_count_total(self):
         """ returns currently loaded amount of classes..."""
-        metric_value = self.json_data["list"][-1]["memoryInformations"]["loadedClassesCount"]
+        json_data = self._get_json_data("jvm")
+        metric_value = json_data["list"][-1]["memoryInformations"]["loadedClassesCount"]
         return {
             "value": metric_value,
             "name": "loaded_classes_count_total",
@@ -328,8 +335,8 @@ class CheckJavamelodyHealth(nag.Resource):
     def request_count_timed(self):
         """ returns an average of total requests received across self.lapsize_in_secs,
         calculated from a historic value read from a file and the current value from the web interface"""
-
-        current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
+        json_data = self._get_json_data("jvm")
+        current_value = json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
         metric_value = self._evaluate_with_historical_metric("request_count_timed", current_value)
         self._write_json_metric_to_file("request_count_timed", current_value)
         return {
@@ -341,8 +348,8 @@ class CheckJavamelodyHealth(nag.Resource):
     def error_count_timed(self):
         """ returns an average of total errors encountered across self.lapsize_in_secs,
         calculated from a historic value read from a file and the current value from the web interface"""
-
-        current_value = self.json_data["list"][-1]["tomcatInformationsList"][0]["errorCount"]
+        json_data = self._get_json_data("jvm")
+        current_value = json_data["list"][-1]["tomcatInformationsList"][0]["errorCount"]
         metric_value = self._evaluate_with_historical_metric("error_count_timed",current_value)
         self._write_json_metric_to_file("error_count_timed", current_value)
         return {
@@ -354,8 +361,8 @@ class CheckJavamelodyHealth(nag.Resource):
     def garbage_collection_timed(self):
         """ returns an average of total required ms of garbage collection time,
         calculated from a historic value read from a file and the current value from the web interface"""
-
-        current_value = self.json_data["list"][-1]["memoryInformations"]["garbageCollectionTimeMillis"]
+        json_data = self._get_json_data("jvm")
+        current_value = json_data["list"][-1]["memoryInformations"]["garbageCollectionTimeMillis"]
         metric_value = self._evaluate_with_historical_metric("garbage_collection_timed",current_value)
         self._write_json_metric_to_file("garbage_collection_timed",current_value)
         return {
