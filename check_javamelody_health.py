@@ -96,7 +96,10 @@ class CheckJavamelodyHealth(nag.Resource):
                 return 0
 
     def _get_tmpdir_file_prefix(self):
-        return self.json_data["list"][-1]["pid"]
+        if not self.jvm_pid:
+            json_data = self._get_json_data("jvm")
+            self.jvm_pid = json_data["list"][-1]["pid"]
+        return self.jvm_pid
 
     def _get_absolute_path_for_tmpfile(self, metric):
         try:
@@ -336,6 +339,7 @@ class CheckJavamelodyHealth(nag.Resource):
         """ returns an average of total requests received across self.lapsize_in_secs,
         calculated from a historic value read from a file and the current value from the web interface"""
         json_data = self._get_json_data("jvm")
+        self.jvm_pid = json_data["list"][-1]["pid"]
         current_value = json_data["list"][-1]["tomcatInformationsList"][0]["requestCount"]
         metric_value = self._evaluate_with_historical_metric("request_count_timed", current_value)
         self._write_json_metric_to_file("request_count_timed", current_value)
@@ -349,6 +353,7 @@ class CheckJavamelodyHealth(nag.Resource):
         """ returns an average of total errors encountered across self.lapsize_in_secs,
         calculated from a historic value read from a file and the current value from the web interface"""
         json_data = self._get_json_data("jvm")
+        self.jvm_pid = json_data["list"][-1]["pid"]
         current_value = json_data["list"][-1]["tomcatInformationsList"][0]["errorCount"]
         metric_value = self._evaluate_with_historical_metric("error_count_timed",current_value)
         self._write_json_metric_to_file("error_count_timed", current_value)
@@ -362,6 +367,7 @@ class CheckJavamelodyHealth(nag.Resource):
         """ returns an average of total required ms of garbage collection time,
         calculated from a historic value read from a file and the current value from the web interface"""
         json_data = self._get_json_data("jvm")
+        self.jvm_pid = json_data["list"][-1]["pid"]
         current_value = json_data["list"][-1]["memoryInformations"]["garbageCollectionTimeMillis"]
         metric_value = self._evaluate_with_historical_metric("garbage_collection_timed",current_value)
         self._write_json_metric_to_file("garbage_collection_timed",current_value)
